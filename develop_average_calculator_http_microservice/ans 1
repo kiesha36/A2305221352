@@ -1,0 +1,64 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List
+import requests
+import time
+
+app = FastAPI()
+
+WINDOW_SIZE = 10
+numbers_window = []
+
+class ResponseModel(BaseModel):
+    windowPrevState: List[int]
+    windowCurrState: List[int]
+    numbers: List[int]
+    avg: float
+
+def fetch_numbers(number_id: str) -> List[int]:
+    url = f"http://test-server/numbers/{number_id}"
+    try:
+        response = requests.get(url, timeout=0.5)
+        response.raise_for_status()
+        numbers = response.json().get("numbers", [])
+        return numbers
+    except (requests.RequestException, ValueError):
+        return []
+
+def calculate_average(numbers: List[int]) -> float:
+    if len(numbers) == 0:
+        return 0.0
+    return sum(numbers) / len(numbers)
+
+@app.get("/numbers/{number_id}", response_model=ResponseModel)
+def get_numbers(number_id: str):
+    if number_id not in ["p", "f", "e", "r"]:
+        raise HTTPException(status_code=400, detail="Invalid number ID")
+
+    new_numbers = fetch_numbers(number_id)
+
+    if not new_numbers:
+        raise HTTPException(status_code=500, detail="Failed to fetch numbers")
+
+    window_prev_state = numbers_window.copy()
+
+    for num in new_numbers:
+        if num not in numbers_window:
+            if len(numbers_window) >= WINDOW_SIZE:
+                numbers_window.pop(0)
+            numbers_window.append(num)
+
+    avg = calculate_average(numbers_window)
+
+    response = ResponseModel(
+        windowPrevState=window_prev_state,
+        windowCurrState=numbers_window.copy(),
+        numbers=new_numbers,
+        avg=round(avg, 2)
+    )
+
+    return response
+
+if _name_ == "_main_":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=9876)
